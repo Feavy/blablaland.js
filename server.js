@@ -10,8 +10,25 @@ var ServerBBL = require('./blablaland/blablaland.js');
 if (database.length > 2) database = JSON.parse(database);
 else database = {};
 
+var port = 80;
+var servername = "localhost";
+
+var request = require("request");
+  
+request({uri: "https://raw.githubusercontent.com/GregVido/blablaland.js/master/README.md"}, 
+    function(error, response, body) {
+        const local = fs.readFileSync('README.md', 'utf8');
+        if(local == body) console.log("Votre version est à jour.")
+        else console.log("Une mise à jour est disponible.")
+    }
+);
+
 var origine = new ServerBBL(12301);
+var legende = new ServerBBL(12302);
+var fury = new ServerBBL(12303);
 origine.database = database;
+legende.database = database;
+fury.database = database;
 
 setInterval(function () {
     database = fs.readFileSync("database.json");
@@ -21,12 +38,19 @@ setInterval(function () {
 }, 200);
 
 
-app.use(session({ secret: 'gpt_issou', cookie: { maxAge: 60000 } }))
+// app.use(session({ secret: 'FYJG4J1G1JGH1CG1HFC54GH1',}))
+app.use(session({
+    secret: "HT4TH41F1H61HF1HF1JHF514JY",
+    name: "blablaland.js",
+    proxy: true,
+    resave: true,
+    saveUninitialized: true
+}));
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
 app.get('/params.xml', (req, res) => {
-    res.send(`<params><scriptadr value="/scripts/"/><socket port="12301" host="127.0.0.1"/></params>`);
+    res.send(`<params><scriptadr value="/scripts/"/><socket port="12301" host="${servername}"/></params>`);
 });
 app.post('/scripts//chat/getBBL.php', (req, res) => {
     var user = getUserBySession(req.session.session);
@@ -106,8 +130,10 @@ app.get('/signup', (req, res) => {
                 "map": {
                     "id":9
                 },
+                "sexe": 0,
                 "bbl": 0,
                 "xp": 0,
+                "chatColor": "0129402a0a20333334",
                 "session": req.session.session,
                 "time": new Date().getTime(),
                 "role": "Membre"
@@ -158,8 +184,8 @@ app.get('/info', (req, res) => {
 });
 app.use(express.static('site-web'));
 
-http.listen(process.env.PORT || 80, function () {
-    console.log("Server Web on " + (process.env.PORT || 80));
+http.listen(port, function () {
+    console.log("Server Web on " + port);
 });
 
 String.prototype.replaceAll = function(search, replacement) {

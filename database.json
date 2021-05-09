@@ -16,18 +16,53 @@
                 0,
                 0
             ],
-            "id": 7,
-            "posX": 86500,
-            "posY": 33250,
+            "id": 569,
+            "posX": 45700,
+            "posY": 39550,
             "direction": false
         },
         "map": {
             "id": 9
         },
+        "sexe": 0,
         "bbl": 0,
         "xp": 0,
-        "session": "3920209",
-        "time": 1570372386147,
+        "chatColor": "0129402a0a20333334",
+        "session": "3587525",
+        "time": 1571470104136,
+        "role": "Admin"
+    },
+    "2": {
+        "id": 2,
+        "pseudo": "test",
+        "password": "123456",
+        "skin": {
+            "color": [
+                0,
+                0,
+                88,
+                44,
+                44,
+                58,
+                0,
+                0,
+                0,
+                0
+            ],
+            "id": 569,
+            "posX": 77750,
+            "posY": 33950,
+            "direction": false
+        },
+        "map": {
+            "id": 251
+        },
+        "sexe": 0,
+        "bbl": 0,
+        "xp": 0,
+        "chatColor": "0129402a0a20333334",
+        "session": "3347447",
+        "time": 1571470817096,
         "role": "Membre"
     }
 }

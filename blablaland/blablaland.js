@@ -1,4 +1,5 @@
 var bsplit = require('buffer-split');
+var zlib = require('zlib');
 var net = require('net');
 var fs = require('fs');
 
@@ -6,21 +7,42 @@ var GlobalProperties = require("./bbl/GlobalProperties.js");
 var variables = require("./maps/variables.js");
 var SocketMessage = require("./client/SocketMessage");
 var ByteArray = new require("./client/ByteArray.js");
+var respawn = require("./maps/respawn.js");
+var rawdata = fs.readFileSync('config.json');
+var config = JSON.parse(rawdata);
 
 var powerInfo = {
     10000: [2, 1, 99999, 5, 5, new SocketMessage()],
     10001: [2, 2, 99999, 5, 5, new SocketMessage()],
     10002: [2, 3, 99999, 5, 5, new SocketMessage()],
     10003: [2, 4, 0, 5, 5, new SocketMessage()],
-    10004: [2, 5, 0, 5, 5, new SocketMessage()]
+    10004: [2, 5, 0, 5, 5, new SocketMessage()],
+    10005: [2, 6, 0, 5, 5, new SocketMessage()]
 };
+
+function modulo(a, b) {
+    return a - Math.floor(a/b)*b;
+}
+function ToUint32(x) {
+    return modulo(parseInt(x), Math.pow(2, 32));
+}
 
 class BblCamera {
     constructor() {
         this.mapId = 9;
         this.cameraId = 1;
-        this.serverId = 0;
+        this.serverId = 1;
         this.methodeId = 3;
+        this.mapLoaded = false;
+        this.mort = false;
+        this.allowChat = false;
+        this.transportToPlanete = 0;
+    }
+    getUserByUid(uid) {
+        for(var i in this.server.userList) {
+            if(this.server.userList[i].uid == uid) return this.server.userList[i];
+        }
+        return null;
     }
     userSmileyEvent(param1) {
         for (var i in Array(14).keys()) {
@@ -51,11 +73,31 @@ class BblCamera {
         return packet;
     }
     teleportToMap(camera_id, map_id, server_id, methode_id) {
-        this.methodeId = methode_id;
-        this.map.leaveMap(this.mapId, this);
-        if(methode_id == 4) {
-            this.mainUser.position.x = 95000 / 2;
-            this.mainUser.position.y = 7500;
+        var errorId = map_id == this.mapId ? 1: 0;
+        if(!this.mapLoaded) return;
+        if(!(map_id in this.server.variable.maps) || (map_id == 355 && !this.transportToPlanete)) {
+            this.parsedEventMessage(1, 10, new SocketMessage());
+            return;
+        }
+        if((this.server.variable.maps[map_id][8] != this.server.variable.maps[this.mapId][8]) && !this.transportToPlanete) {
+            this.sendMsg("Impossible de se téléporter vers une autre planete !!");
+            return;
+        }
+        if(!errorId) {
+            this.mapLoaded = false;
+            this.methodeId = methode_id;
+            this.map.leaveMap(this.mapId, this);
+            if(methode_id >= 2) {
+                if(map_id in respawn) {
+                    this.mainUser.position.x = respawn[map_id][0];
+                    this.mainUser.position.y = respawn[map_id][1];
+                }
+                this.mainUser.underWater = false;
+                this.mainUser.grimpe = false;
+                this.mainUser.accroche = false;
+                this.mainUser.speed.x = 0;
+                this.mainUser.speed.y = 0;
+            }
         }
         var packet = new SocketMessage(3, 5);
         packet.bitWriteUnsignedInt(GlobalProperties.BIT_CAMERA_ID, camera_id);
@@ -63,18 +105,50 @@ class BblCamera {
         packet.bitWriteUnsignedInt(GlobalProperties.BIT_SERVER_ID, server_id);
         packet.bitWriteUnsignedInt(GlobalProperties.BIT_MAP_FILEID, map_id);
         packet.bitWriteUnsignedInt(GlobalProperties.BIT_METHODE_ID, methode_id);
-        packet.bitWriteUnsignedInt(GlobalProperties.BIT_ERROR_ID, 0);
+        packet.bitWriteUnsignedInt(GlobalProperties.BIT_ERROR_ID, errorId);
         this.send(packet);
+    }
+    die(msg = "", methode=7) {
+        if(!([55, 446, 264, 251, 252, 253, 254, 255, 256].includes(this.mapId))) {
+            if(this.mainUser.skinId != 405) {
+                const old = this.mainUser.skinId;
+                this.mainUser.skinId = 405;
+                var _this = this;
+                setTimeout(function () {
+                    _this.mainUser.skinId = old;
+                    _this.reloadPlayerState(0, 0);
+                }, 10000);
+            }
+            this.sendMsg(msg, {ALL:true})
+            this.mort = true;
+            var mapId = 253;
+            if(this.server.variable.maps[this.mapId].length > 9) mapId = this.server.variable.maps[this.mapId][9];
+            this.teleportToMap(this.cameraId, mapId, this.serverId, methode);
+        }
+    }
+    sendError(text) {
+        var packet = new SocketMessage(1, 2);
+        packet.bitWriteString(text);
+        this.send(packet);
+        this.connectionLost();
+        this.socket.end();
     }
     parsedEventMessage(type, stype, loc5) {
         var packet;
         if (type == 3) {
             if (stype == 3) {
+                if(config.allowTouriste == "false") {
+                    if(this.isTouriste) {
+                        this.sendError(config.msgErrorTouriste);
+                        return;
+                    }
+                }
+                this.server.addClient(this);
                 var token = loc5.bitReadUnsignedInt(32);
                 packet = new SocketMessage(3, 2);
                 packet.bitWriteUnsignedInt(GlobalProperties.BIT_ERROR_ID, 0);
                 packet.bitWriteUnsignedInt(GlobalProperties.BIT_CAMERA_ID, this.cameraId);
-                packet.bitWriteString(this.pseudo);
+                packet.bitWriteString(this.mainUser.chatColor);
                 packet.bitWriteUnsignedInt(GlobalProperties.BIT_MAP_ID, this.mapId);
                 packet.bitWriteUnsignedInt(GlobalProperties.BIT_MAP_FILEID, this.mapId);
                 this.userSmileyEvent(packet);
@@ -95,6 +169,16 @@ class BblCamera {
                 }
                 packet.bitWriteBoolean(false);
                 this.send(packet);
+                this.chatBuffer = {
+                    id: parseInt(Math.random() * 64),
+                    position: 680000,
+                    size: parseInt(Math.random() * 15000)
+                }
+                packet = new SocketMessage(1, 18);
+                packet.bitWriteUnsignedInt(32, this.chatBuffer.id); // id
+                packet.bitWriteUnsignedInt(32, this.chatBuffer.position); // position
+                packet.bitWriteUnsignedInt(32, this.chatBuffer.size); //size
+                this.send(packet);
                 this.connected = true;
             } else if (stype == 5) {
                 var methode_id = loc5.bitReadUnsignedInt(GlobalProperties.BIT_METHODE_ID);
@@ -106,17 +190,18 @@ class BblCamera {
             } else if (stype == 6) {
                 var camera_id = loc5.bitReadUnsignedInt(GlobalProperties.BIT_CAMERA_ID);
                 var map_id = loc5.bitReadUnsignedInt(GlobalProperties.BIT_MAP_ID);
+                this.mapLoaded = true;
                 this.mapId = map_id;
                 this.map.joinMap(map_id, this);
                 packet = new SocketMessage(4, 1);
                 packet.bitWriteUnsignedInt(GlobalProperties.BIT_CAMERA_ID, this.cameraId);
                 packet.bitWriteUnsignedInt(GlobalProperties.BIT_ERROR_ID, 0);
                 packet.bitWriteUnsignedInt(GlobalProperties.BIT_METHODE_ID, this.methodeId);
-                packet.bitWriteSignedInt(17, 0);
-                packet.bitWriteSignedInt(17, 0);
-                packet.bitWriteUnsignedInt(5, 0);
-                packet.bitWriteUnsignedInt(GlobalProperties.BIT_TRANSPORT_ID, 0);
-                packet.bitWriteUnsignedInt(16, 0);
+                packet.bitWriteSignedInt(17, this.server.variable.maps[this.mapId][3]);
+                packet.bitWriteSignedInt(17, this.server.variable.maps[this.mapId][4]);
+                packet.bitWriteUnsignedInt(5, this.server.variable.maps[this.mapId][5]);
+                packet.bitWriteUnsignedInt(GlobalProperties.BIT_TRANSPORT_ID, this.server.variable.maps[this.mapId][2]);
+                packet.bitWriteUnsignedInt(16, this.server.variable.maps[this.mapId][6]);
                 for (var client in this.map.maps[map_id].userList) {
                     client = this.map.maps[map_id].userList[client];
                     packet.bitWriteBoolean(true);
@@ -144,6 +229,12 @@ class BblCamera {
                 this.methodeId = 0;
                 if (this.firstmap) {
                     this.firstmap = false;
+                    packet = new SocketMessage(5, 11, this);
+                    packet.bitWriteBoolean(true); //html
+                    packet.bitWriteBoolean(false); //alerte
+                    packet.bitWriteString(`\n<font color=\'#022ebf\'>Bienvenue sur <font color=\'#bf0202\'><a href="https://github.com/GregVido/blablaland.js" target="_blank">blablaland.js</a></font> ! [v0.0.2] \
+                    \nDévelopper : <font color=\'#bf0202\'><a href="https://www.youtube.com/gregvido" target="_blank" >GregVido</a></font></font>`);
+                    this.send(packet);
                 }
             }
         }
@@ -174,11 +265,49 @@ class BblLogged extends BblCamera {
             grimpe: false,
             accroche: false,
             dodo: false,
-            position: { x: 10000, y: 5000 },
+            position: { x: respawn[this.mapId][0], y: respawn[this.mapId][1] },
             speed: { x: 0, y: 0 },
-            surfaceBody: 0
+            surfaceBody: 0,
+            dodoSid:0,
+            chatColor:"0129402a0a20333334"
         };
+        this.bbl = 0;
+        this.isTouriste = true;
         this.fxUser = {};
+    }
+    sendMsg(text, data={}) {
+        var packet = new SocketMessage(5, 11, this);
+        packet.bitWriteBoolean(data.HTML ? data.HTML : false); //html
+        packet.bitWriteBoolean(data.ALERTE ? data.ALERTE : false); //alerte
+        packet.bitWriteString(text);
+        data.ALL ? this.map.maps[this.mapId].sendAll(packet) : this.send(packet);
+    }
+    reloadPlayerState(methode=4, position=true) {
+        var packet = new SocketMessage(5, 9, this);
+        packet.bitWriteUnsignedInt(GlobalProperties.BIT_USER_PID, this.pid);
+        packet.bitWriteUnsignedInt(GlobalProperties.BIT_METHODE_ID, methode);
+        packet = this.writePlayerState(packet, position, true, true);
+        packet.bitWriteUnsignedInt(GlobalProperties.BIT_METHODE_ID, methode);
+        this.map.maps[this.mapId].sendAll(packet);
+    }
+    updateDodo(activ) {
+        if(activ != this.mainUser.dodo) {
+            var packet = new SocketMessage(5, 5, this);
+            packet.bitWriteUnsignedInt(GlobalProperties.BIT_USER_PID, this.pid)
+            packet.bitWriteBoolean(activ)
+            this.map.maps[this.mapId].sendAll(packet);
+            this.mainUser.dodo = activ;
+        }
+        if(!activ) {
+            this.mainUser.dodoSid++;
+            const last_id = this.mainUser.dodoSid;
+            var _this = this;
+            setTimeout(function () {
+                if(_this.mainUser.dodoSid == last_id) {
+                    _this.updateDodo(true);
+                }
+            }, 60000);
+        }
     }
     parsedEventMessage(type, stype, loc5) {
         super.parsedEventMessage(type, stype, loc5);
@@ -196,7 +325,12 @@ class BblLogged extends BblCamera {
                         this.mainUser.position.y = this.server.database[id].skin.posY;
                         this.mainUser.direction = this.server.database[id].skin.direction;
                         this.xp = this.server.database[id].xp;
+                        this.sex = this.server.database[id].sexe;
                         this.uid = id;
+                        this.bbl = this.server.database[id].bbl;
+                        this.mainUser.chatColor = this.server.database[id].chatColor;
+                        if(this.server.database[id].role == "Admin") this.grade = 1000;
+                        this.isTouriste = false;
                     }
                 }
                 packet = new SocketMessage(2, 1);
@@ -208,6 +342,18 @@ class BblLogged extends BblCamera {
             } else if (stype == 4) {
                 var text = loc5.bitReadString();
                 var action = loc5.bitReadUnsignedInt(3);
+                var commandes = text.split(" ");
+                if(text == "!info") {
+                    packet = new SocketMessage(5, 11, this);
+                    packet.bitWriteBoolean(true); //html
+                    packet.bitWriteBoolean(false); //alerte
+                    packet.bitWriteString(`${this.mapId}: [${this.mainUser.position.x}, ${this.mainUser.position.y}],`);
+                    this.send(packet);
+                    return;
+                } else if(commandes[0] == "!tp") {
+                    this.teleportToMap(this.cameraId, parseInt(commandes[1]), this.serverId, 4);
+                    return;
+                }
                 packet = new SocketMessage(5, 7, this);
                 packet.bitWriteBoolean(true); //html
                 packet.bitWriteBoolean(false); //modo
@@ -219,6 +365,7 @@ class BblLogged extends BblCamera {
                 packet.bitWriteString(text);
                 packet.bitWriteUnsignedInt(3, action);
                 this.map.maps[this.mapId].sendAll(packet);
+                this.updateDodo(false);
             } else if (stype == 8) {
                 var packId = loc5.bitReadUnsignedInt(GlobalProperties.BIT_SMILEY_PACK_ID);
                 var smileId = loc5.bitReadUnsignedInt(GlobalProperties.BIT_SMILEY_ID);
@@ -230,8 +377,69 @@ class BblLogged extends BblCamera {
                 packet.bitWriteUnsignedInt(GlobalProperties.BIT_SMILEY_ID, smileId);
                 packet.bitWriteBinaryData(data);
                 this.map.maps[this.mapId].sendAll(packet, this);
+                this.updateDodo(false);
+            } else if (stype == 7) {
+                this.updateDodo(true);
+            } else if (stype == 9) {
+                var msg = loc5.bitReadString();
+                var methode = loc5.bitReadUnsignedInt(8);
+                this.die(msg, methode);
+            } else if (stype == 10) {
+                this.mainUser.position.y = 5000;
+                this.mainUser.position.x = 35000;
+                if(this.mapId in respawn) {
+                    this.mainUser.position.x = respawn[this.mapId][0];
+                    this.mainUser.position.y = respawn[this.mapId][1];
+                }
+                this.mainUser.underWater = false;
+                this.mainUser.grimpe = false;
+                this.mainUser.accroche = false;
+                this.mainUser.speed.x = 0;
+                this.mainUser.speed.y = 0;
+                this.reloadPlayerState();
+            } else if (stype == 16) {
+                const folder = ["skin", "fx", "map", "smiley"];
+                const name = ["skin.swf", "fx.swf", "map.swf", "SmileyPack.swf"]
+                const type = loc5.bitReadUnsignedInt(4) - 1;
+                const id = loc5.bitReadUnsignedInt(16);
+                const byteReceveid = loc5.bitReadUnsignedInt(32);
+                if(!fs.existsSync(`site-web/data/${folder[type]}/${id}/`)) {
+                    this.sendError("Les fichiers clients ne sont pas valide.");
+                    return;
+                }
+                const file = fs.readFileSync(`site-web/data/${folder[type]}/${id}/${name[type]}`);
+                var _this = this;
+                zlib.inflate(file.slice(8), function(err, buf) {
+                    var data = Buffer.from(file.slice(0, 8)); 
+                    const unzip = Buffer.concat([data, buf]);
+                    var byte = 0;
+                    for (var loc4 = 0; loc4 < unzip.length - 8; loc4 += 5) {
+                        byte = byte + loc4 * unzip[loc4 + 8];
+                    }
+                    byte = ToUint32(byte);
+                    if(byte != byteReceveid) _this.sendError("Les fichiers clients ne sont pas valide.");
+                });
+            } else if (stype == 18) {
+                var id = loc5.bitReadUnsignedInt(32);
+                if(id == this.chatBuffer.id) {
+                    const chat = fs.readFileSync(`site-web/chat/chat.swf`);
+                    var _this = this;
+                    zlib.inflate(chat.slice(8), function(err, buf) {
+                        var data = Buffer.from(chat.slice(0, 8)); 
+                        const unzip = Buffer.concat([data, buf]);
+                        for(var loc19 = 0; loc19 < _this.chatBuffer.size; loc19++) {
+                            const loc20 = (loc19 + _this.chatBuffer.position) % (unzip.length - 8);
+                            _this.allowChat = true;
+                            if(unzip[loc20 + 8] != loc5.bitReadUnsignedInt(8)){
+                                _this.sendError("Les fichiers clients ne sont pas valide.");
+                                return;
+                            }
+                        }
+                    });
+                } else _this.sendError("Les fichiers clients ne sont pas valide.");
             }
         } else if (type == 2) {
+            if(!this.mapLoaded) return;
             if (stype == 2 || stype == 1) {
                 var mapId = loc5.bitReadUnsignedInt(GlobalProperties.BIT_MAP_ID);
                 var GP_Timer = loc5.bitReadUnsignedInt(32);
@@ -248,6 +456,7 @@ class BblLogged extends BblCamera {
                     packet.bitWriteSignedInt(18, loc5.bitReadSignedInt(18));
                     packet.bitWriteSignedInt(18, loc5.bitReadSignedInt(18));
                 } else {
+                    this.updateDodo(false);
                     packet = new SocketMessage(5, 3, this);
                     packet.bitWriteUnsignedInt(GlobalProperties.BIT_USER_PID, this.pid);
                     packet.bitWriteUnsignedInt(32, GP_Timer);
@@ -255,8 +464,13 @@ class BblLogged extends BblCamera {
                 }
                 this.map.maps[this.mapId].sendAll(packet, this);
                 this.socketUnlock();
-            } else if (stype == 5) {
-                this.server.addClient(this);
+                if(!this.allowChat)this.sendError("");
+            } else if (stype == 4) {
+                const app_id = loc5.bitReadUnsignedInt(5);
+                if(app_id == 1) {
+                    this.saveData("chatColor", loc5.bitReadString());
+                    this.sendMsg("Les couleurs du chat on correctement été modifié.");
+                }
             }
         }
         else if (type == 6) {
@@ -303,6 +517,20 @@ class BblLogged extends BblCamera {
                     map: true
                 });
                 if(!activ) this.fxUser[fxSid] = {};
+            } else if (stype == 12) {
+                const fx_id = loc5.bitReadUnsignedInt(4);
+                const fx_sid = loc5.bitReadUnsignedInt(16);
+                const user_id = loc5.bitReadUnsignedInt(GlobalProperties.BIT_USER_ID);
+                const activ = loc5.bitReadBoolean();
+                const floor = loc5.bitReadUnsignedInt(8);
+                var user = this.getUserByUid(user_id);
+                if(user_id == this.uid) {
+                    this.die(this.pseudo + " a été tué par sa propre bobombe :)");
+                } else if(user) {
+                    this.die(this.pseudo + " a été tué par une bobombe placé par " + user.pseudo);
+                } else {
+                    this.die(this.pseudo + " a été tué par une bobombe placé par un blablateur.");
+                }
             } else if (stype == 8) {
                 var objectId = loc5.bitReadUnsignedInt(32);
                 var hasData = loc5.bitReadBoolean();
@@ -340,7 +568,9 @@ class BblLogged extends BblCamera {
                 } else if(objectId == 10002) {
                     if(hasData) {
                         const tpId = binaryData.bitReadUnsignedInt(GlobalProperties.BIT_MAP_ID);
-                        this.teleportToMap(this.cameraId, tpId, this.serverId, 4);
+                        if(!([55, 446, 264, 251, 252, 253, 254, 255, 256].includes(tpId))) {
+                            this.teleportToMap(this.cameraId, tpId, this.serverId, 4);
+                        }
                     }
                 } else if(objectId == 10003) {
                     this.writeUserFXChange(7600, {
@@ -361,6 +591,10 @@ class BblLogged extends BblCamera {
                     });
                 } else if(objectId == 10004) {
                     if(hasData) {
+                        if(this.server.variable.maps[this.mapId][6] == 3) {
+                            this.sendMsg("Cette map est protégée contre les bombes ^^");
+                            return;
+                        }
                         const posX = binaryData.bitReadSignedInt(16);
                         const posY = binaryData.bitReadSignedInt(16);
                         const surface = binaryData.bitReadUnsignedInt(8);
@@ -386,13 +620,96 @@ class BblLogged extends BblCamera {
                             data.active = false;
                             _this.fxManager.writeMapFXChange(_this, data);
                             map.delete(id);
-                        }, 2000);
+                        }, parseInt(Math.random() * 15) * 1000);
                     }
                 }
                 console.log(objectId);
+            } else if(stype == 15) {
+                const fx_id = loc5.bitReadUnsignedInt(GlobalProperties.BIT_FX_ID);
+                if(fx_id == 14) {
+                    if(loc5.bitReadBoolean()) {
+                        const new_server = loc5.bitReadUnsignedInt(GlobalProperties.BIT_SERVER_ID);
+                        if(new_server != this.serverId) {
+                            var packet = new SocketMessage(4, 2, this);
+                            packet.bitWriteUnsignedInt(GlobalProperties.BIT_MAP_ID, this.mapId);
+                            packet.bitWriteUnsignedInt(GlobalProperties.BIT_SERVER_ID, new_server);
+                            packet.bitWriteUnsignedInt(GlobalProperties.BIT_MAP_FILEID, this.mapId);
+                            packet.bitWriteUnsignedInt(GlobalProperties.BIT_METHODE_ID, 4);
+                            this.send(packet);
+                        }
+                    }
+                }
             }
         }
         else if(type == 9) {
+            if(stype == 1) {
+                const s_type = loc5.bitReadUnsignedInt(3);
+                if(this.mapId == 445 || this.mapId == 408) {
+                    const planete = loc5.bitReadUnsignedInt(GlobalProperties.BIT_MAP_PLANETID);
+                    console.log(planete);
+                    if(planete == 1) {
+                        this.transportToPlanete = 408;
+                    } else if(planete == 0) {
+                        this.transportToPlanete = 445;
+                    }
+                    this.teleportToMap(this.cameraId, 355, this.serverId, 0);
+                } else if(this.mapId == 355) {
+                    if(this.transportToPlanete != 0) this.teleportToMap(this.cameraId, this.transportToPlanete, this.serverId, 0);
+                    this.transportToPlanete = 0;
+                } else if(this.mapId == 343) {
+                    var loc1 = true;
+                    var p = new SocketMessage();
+                    p.bitWriteUnsignedInt(3, 0);
+                    if(s_type == 1 && this.sex == 1) {
+                        loc1 = false;
+                        this.mainUser.position.x = 94900;
+                        this.teleportToMap(this.cameraId, 342, this.serverId, 0);
+                    } else if(s_type == 0 && this.sex == 2) {
+                        loc1 = false;
+                        this.mainUser.position.x = 100;
+                        this.teleportToMap(this.cameraId, 344, this.serverId, 0);
+                    } else if(s_type == 2) {
+                        loc1 = false;
+                    } else if(s_type == 3) {
+                        if(this.bbl < 1) loc1 = false;
+                        p = new SocketMessage();
+                        p.bitWriteUnsignedInt(3, 1);
+                        p.bitWriteBoolean(true); // true = animation buy
+                        p.bitWriteBoolean(false); // true = gagné
+                        p.bitWriteUnsignedInt(GlobalProperties.BIT_SKIN_ID, 4); //kdo, voir swf (343)
+                        if(loc1) this.bbl--;
+                    }
+                    if(loc1) {
+                        this.fxManager.writeUserFXChange(this, {
+                            loc17: true,
+                            id: 8,
+                            sid: 0,
+                            active: true,
+                            data: [p],
+                            map: false
+                        });
+                    }
+                } else if(this.mapId == 11) {
+                    var code = "";
+                    for(var i = 0; i < 4; i++) {
+                        code += loc5.bitReadUnsignedInt(4).toString();
+                    }
+                    if(code == "7641") {
+                        this.teleportToMap(this.cameraId, 354, this.serverId, 0);
+                    }
+                    var p = new SocketMessage();
+                    p.bitWriteUnsignedInt(3, 0);
+                    p.bitWriteBoolean(code == "7641");
+                    this.fxManager.writeUserFXChange(this, {
+                        loc17: true,
+                        id: 8,
+                        sid: 0,
+                        active: true,
+                        data: [p],
+                        map: false
+                    });
+                }
+            }
             if(stype == 2) {
                 const id = loc5.bitReadUnsignedInt(16);
                 if(id == 1) {
@@ -494,6 +811,7 @@ class Client extends BblLogged {
         this.mapPid = 0;
         this.socket = socket;
         this.server = server;
+        this.serverId = server.id;
         this.fxManager = fxManager;
         this.inCmpt = 12;
         this.outCmpt = 12;
@@ -502,18 +820,26 @@ class Client extends BblLogged {
         socket.on('close', this.connectionLost.bind(this));
     }
     errorClient(err) {
-        console.log("error");
         this.socket.destroy();
         this.connectionLost();
+    }
+    saveData(type, value) {
+        const stype = type.split(".");
+        if(stype.length > 1) {
+            this.server.database[this.uid][stype[0]][stype[1]] = value;
+        } else {
+            this.server.database[this.uid][type] = value;
+        }
+        fs.writeFileSync("database.json", JSON.stringify(this.server.database, null, 4), "utf8");
     }
     connectionLost() {
         if (this.connected) {
             this.methodeId = 3;
             if(this.uid) {
-                this.server.database[this.uid].map.id = this.mapId;
-                this.server.database[this.uid].skin.posX = this.mainUser.position.x;
-                this.server.database[this.uid].skin.posY = this.mainUser.position.y;
-                this.server.database[this.uid].skin.direction = this.mainUser.direction;
+                this.saveData("map.id", this.mapId);
+                this.saveData("skin.posX", this.mainUser.position.x);
+                this.saveData("skin.posY", this.mainUser.position.y);
+                this.saveData("skin.direction", this.mainUser.direction);
                 fs.writeFileSync("database.json", JSON.stringify(this.server.database, null, 4), "utf8");
             }
             if (this.mapId in this.map.maps) this.map.leaveMap(this.mapId, this);
@@ -526,7 +852,7 @@ class Client extends BblLogged {
             this.socket.write("<?xml version=\"1.0\"?><cross-domain-policy><allow-access-from domain=\"*\" to-ports=\"*\" /></cross-domain-policy>\x00");
             return;
         }
-        var data_split = bsplit(data, new Buffer("\x00"));
+        var data_split = bsplit(data, new Buffer.from("\x00"));
         data_split.pop();
         for (var i in data_split) {
             this.inCmpt++;
@@ -541,7 +867,7 @@ class Client extends BblLogged {
     }
     parsedEventMessage(type, stype, loc5) {
         var packet;
-        console.log(type, stype);
+        if(config.showPacketsType == "true") console.log(type, stype);
         super.parsedEventMessage(type, stype, loc5);
         if (type == 1) {
             if (stype == 1) {
@@ -591,7 +917,9 @@ class Client extends BblLogged {
         loc4 = param1.exportMessage();
         socket.writeByte(loc4);
         socket.writeByte(0);
-        this.socket.write(socket.getBuffer());
+        try {
+            this.socket.write(socket.getBuffer());
+        } catch(e) {}
     }
 }
 
@@ -685,6 +1013,12 @@ class FxManager {
             for(var i in data.data) {
                 p.bitWriteUnsignedInt(8, data.data[i]);
              }
+        } else if (data.id == 4) {
+            // a retravailler
+            p.bitWriteBoolean(true);
+            p.bitWriteUnsignedInt(6, data.data[0]);
+            if(data.data[0] == 5) p.bitWriteUnsignedInt(GlobalProperties.BIT_SKIN_ID, data[1]);
+            p.bitWriteBoolean(false);
         } else if (data.id == 5) {
             p.bitWriteUnsignedInt(32, data.data[0]);
             p.bitWriteBoolean(data.data[1]);
@@ -703,6 +1037,8 @@ class FxManager {
             } else {
                 p.bitWriteBoolean(false);
             }
+        } else if (data.id == 8) {
+            p = data.data[0];
         }
         return p;
     }
@@ -747,6 +1083,7 @@ class ServerBBL {
         this.variable = new variables(port - 12301);
         this.userList = {};
         this.database = null;
+        this.id = 12301 - port;
         this.pid = 1;
     }
     addClient(user) {
