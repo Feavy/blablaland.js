@@ -13,16 +13,6 @@ else database = {};
 var port = 80;
 var servername = "localhost";
 
-var request = require("request");
-  
-request({uri: "https://raw.githubusercontent.com/GregVido/blablaland.js/master/README.md"}, 
-    function(error, response, body) {
-        const local = fs.readFileSync('README.md', 'utf8');
-        if(local == body) console.log("Votre version est à jour.")
-        else console.log("Une mise à jour est disponible.")
-    }
-);
-
 var origine = new ServerBBL(12301);
 var legende = new ServerBBL(12302);
 var fury = new ServerBBL(12303);
