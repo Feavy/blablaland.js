@@ -5,7 +5,8 @@ var http = https.Server(app);
 var bodyParser = require("body-parser");
 var session = require('express-session');
 var fs = require('fs');
-var database = fs.readFileSync("./blablaland.js/database.json");
+const path = require('path');
+var database = fs.readFileSync(path.join(process.resourcesPath, 'blablaland.js', "database.json"));
 var ServerBBL = require('./blablaland/blablaland.js');
 if (database.length > 2) database = JSON.parse(database);
 else database = {};
@@ -21,7 +22,7 @@ legende.database = database;
 fury.database = database;
 
 setInterval(function () {
-    database = fs.readFileSync("./blablaland.js/database.json");
+    database = fs.readFileSync(path.join(process.resourcesPath, 'blablaland.js', "database.json"));
     if (database.length > 2) database = JSON.parse(database);
     else database = {};
     origine.database = database;
@@ -76,9 +77,9 @@ app.get('/signup', (req, res) => {
     if (req.session.username) {
         return res.redirect('/');
     }
-    var file = fs.readFileSync("./blablaland.js/site-web/index.html", 'utf8');
-    var form = fs.readFileSync("./blablaland.js/site-web/form.html", 'utf8');
-    var sign = fs.readFileSync("./blablaland.js/site-web/inscription.html", 'utf8');
+    var file = fs.readFileSync(path.join(process.resourcesPath, 'blablaland.js', "site-web/index.html"), 'utf8');
+    var form = fs.readFileSync(path.join(process.resourcesPath, 'blablaland.js', "site-web/form.html"), 'utf8');
+    var sign = fs.readFileSync(path.join(process.resourcesPath, 'blablaland.js', "site-web/inscription.html"), 'utf8');
     if (req.query.validform == 'Inscription' && req.query.con_pseudo && req.query.con_password) {
         var loc1 = false;
         if (req.query.con_pseudo.length < 3) {
@@ -141,8 +142,8 @@ app.get('/signup', (req, res) => {
     res.send(file);
 });
 app.get('/', (req, res) => {
-    var file = fs.readFileSync("./blablaland.js/site-web/index.html", 'utf8');
-    var form = fs.readFileSync("./blablaland.js/site-web/form.html", 'utf8');
+    var file = fs.readFileSync(path.join(process.resourcesPath, 'blablaland.js', "site-web/index.html"), 'utf8');
+    var form = fs.readFileSync(path.join(process.resourcesPath, 'blablaland.js', "site-web/form.html"), 'utf8');
     if (req.session.username) {
         file = file.replace("{{form}}", `<h1>${req.session.username}</h1><br><a href="/disconnect">Déconnexion</a>`);
         file = file.replace("{{session}}", req.session.session);
@@ -157,8 +158,8 @@ app.get('/', (req, res) => {
     res.send(file);
 });
 app.get('/info', (req, res) => {
-    var file = fs.readFileSync("./blablaland.js/site-web/info.html", 'utf8');
-    var form = fs.readFileSync("./blablaland.js/site-web/form.html", 'utf8');
+    var file = fs.readFileSync(path.join(process.resourcesPath, 'blablaland.js', "site-web/info.html"), 'utf8');
+    var form = fs.readFileSync(path.join(process.resourcesPath, 'blablaland.js', "site-web/form.html"), 'utf8');
     if (req.session.username) {
         file = file.replace("{{form}}", `<h1>${req.session.username}</h1><br><a href="/disconnect">Déconnexion</a>`);
         file = file.replace("{{session}}", req.session.session);
@@ -172,7 +173,8 @@ app.get('/info', (req, res) => {
     }
     res.send(file);
 });
-app.use(express.static('./blablaland.js/site-web'));
+
+app.use(express.static(path.join(process.resourcesPath, 'blablaland.js', "site-web")));
 
 http.listen(port, function () {
     console.log("Server Web on " + port);

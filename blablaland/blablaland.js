@@ -2,13 +2,14 @@ var bsplit = require('buffer-split');
 var zlib = require('zlib');
 var net = require('net');
 var fs = require('fs');
+const path = require('path');
 
 var GlobalProperties = require("./bbl/GlobalProperties.js");
 var variables = require("./maps/variables.js");
 var SocketMessage = require("./client/SocketMessage");
 var ByteArray = new require("./client/ByteArray.js");
 var respawn = require("./maps/respawn.js");
-var rawdata = fs.readFileSync('./blablaland.js/config.json');
+var rawdata = fs.readFileSync(path.join(process.resourcesPath, 'blablaland.js', "config.json"));
 var config = JSON.parse(rawdata);
 
 var powerInfo = {
@@ -403,11 +404,12 @@ class BblLogged extends BblCamera {
                 const type = loc5.bitReadUnsignedInt(4) - 1;
                 const id = loc5.bitReadUnsignedInt(16);
                 const byteReceveid = loc5.bitReadUnsignedInt(32);
-                if(!fs.existsSync(`./blablaland.js/site-web/data/${folder[type]}/${id}/`)) {
+                
+                if(!fs.existsSync(path.join(process.resourcesPath, 'blablaland.js', `site-web/data/${folder[type]}/${id}/`))) {
                     this.sendError("Les fichiers clients ne sont pas valide.");
                     return;
                 }
-                const file = fs.readFileSync(`./blablaland.js/site-web/data/${folder[type]}/${id}/${name[type]}`);
+                const file = fs.readFileSync(path.join(process.resourcesPath, 'blablaland.js', `site-web/data/${folder[type]}/${id}/${name[type]}`));
                 var _this = this;
                 zlib.inflate(file.slice(8), function(err, buf) {
                     var data = Buffer.from(file.slice(0, 8)); 
@@ -422,7 +424,8 @@ class BblLogged extends BblCamera {
             } else if (stype == 18) {
                 var id = loc5.bitReadUnsignedInt(32);
                 if(id == this.chatBuffer.id) {
-                    const chat = fs.readFileSync(`./blablaland.js/site-web/chat/chat.swf`);
+                    
+                    const chat = fs.readFileSync(path.join(process.resourcesPath, 'blablaland.js', `site-web/chat/chat.swf`));
                     var _this = this;
                     zlib.inflate(chat.slice(8), function(err, buf) {
                         var data = Buffer.from(chat.slice(0, 8)); 
